@@ -7,23 +7,63 @@
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.8.0/chart.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.1/moment.min.js"></script>
+    <style>
+        #visitorsTable th {
+            background-color: #ffA500;
+            color: white;
+        }
+        #visitorsTable tbody tr:hover {
+            background-color: #f8f9fa; /* Цвет при наведении курсора на строку */
+        }
+    </style>
+
+    <style>
+    #visitorsTable tr:nth-child(odd) {
+        background-color: #ffff00; /* Жёлтый */
+    }
+    #visitorsTable tr:nth-child(even) {
+        background-color: #ffA500; /* Оранжевый */
+    }
+    </style>
 
 </head>
 <body style="background-image: url('{{ url_for('static', filename='images/background.png') }}'); background-size: cover;">
  <!-- Использовано cover для заполнения всего фона -->
     <nav class="navbar navbar-light bg-light shadow p-3">
         <div class="container" style="width: fit-content;"> <!-- Убран класс mx-4 для унификации стиля -->
-            <img src="{{ url_for('static', filename='images/logo2.png') }}" alt="Логотип">
+            <img src="{{ url_for('static', filename='images/logo2.png') }}" alt="Логотип" style="width:100px;">
             <span class="ms-5">Статистика посещений</span>
         </div>
     </nav>
+
     <h4 class="m-4">Статистика посещений</h4>
     <div class="d-flex justify-content-center mt-3">
+
+        <div class="form-check form-switch mt-3">
+            <input class="form-check-input" type="checkbox" id="modeSwitch" >
+            <label class="form-check-label" for="modeSwitch" >Переключиться на архив</label>
+        </div>
+
         <div class="container" style="width: fit-content">
-            <input type="date" class="shadow rounded" >
+
+            <div id="archivePickerContainer" class="mt-3" style="display: none;">
+                <label for="archiveDate">Выберите дату:</label>
+                <input type="date" id="archiveDate" class="shadow rounded">
+                <button id="loadArchive">Загрузить архив</button>
+            </div>
+
+            <div id="graph-container-live" style="display: block;">
+                <canvas id="canvas-live" width="640" height="480"></canvas>
+            </div>
+
+            <div id="graph-container-archive" style="display: none;">
+                <canvas id="canvas-archive" width="640" height="480"></canvas>
+            </div>
+
             <div id="graph-container">
                 <canvas id="canvas" width="640" height="480"></canvas>
             </div>
+
         </div>
     </div>
     <h4 class="m-4">Видеопоток кафе</h4>
@@ -33,93 +73,175 @@
             <img src="{{ url_for('video_feed') }}" alt="Видеопоток" style="max-width: 100%; height: auto;"><!-- Добавлены атрибуты для контроля размера -->
         </div>
     </div>
-    <table id="visitorsTable">
-        <thead>
-            <tr>
-                <th>Время</th>
-                <th>Количество посетителей</th>
-            </tr>
-        </thead>
-        <tbody>
-            <!-- Здесь будут строки таблицы, добавленные динамически -->
-        </tbody>
-    </table>
+<div id="datePickerContainer">
+    <label for="startDate">Выберите дату начала:</label>
+    <input type="date" id="startDate">
+    <button id="updateButton">Обновить</button>
+</div>
 
-        <script>
-            $(document).ready(function() {
-                $.getJSON('/data/last_24_hours', function(data) {
-                    var tableBody = $('#visitorsTable tbody');
-                    tableBody.empty(); // Очищаем текущие строки таблицы
-                    data.forEach(function(record) {
-                        var row = `<tr>
-                                       <td>${record.timestamp}</td>
-                                       <td>${record.count}</td>
-                                   </tr>`;
-                        tableBody.append(row);
-                    });
-                });
-            });
-        </script>
-        <script>
+<table id="visitorsTable" class="table table-striped table-hover table-bordered table-dark">
+    <thead>
+        <tr>
+            <th>Время</th>
+            <th>Количество посетителей</th>
+        </tr>
+    </thead>
+    <tbody>
+        <!-- Здесь будут строки таблицы, добавленные динамически -->
+    </tbody>
+</table>
+
+<script>
         $(document).ready(function() {
-            // Отображение графика
-            var ctx = document.getElementById("canvas").getContext("2d");
-            var chart = new Chart(ctx, {
-                type: "line",
+            // Инициализация графиков
+            var chartLive, chartArchive;
+            initCharts();
+
+            // Автоматическое обновление данных лайв графика
+            setInterval(function() {
+                updateLiveData();
+            }, 5000); // Обновление каждые 5 секунд
+
+            // Обработчики событий
+            $('#modeSwitch').change(toggleArchiveView);
+            $('#loadArchive').click(loadArchiveData);
+
+
+
+            // Функции
+            function initCharts() {
+            var ctxLive = document.getElementById("canvas-live").getContext("2d");
+            chartLive = new Chart(ctxLive, {
+                type: "bar",
                 data: {
-                    labels: [],
+                    labels: [], // Метки времени
                     datasets: [{
-                        label: "Люди",
-                        data: []
+                        label: "Количество посетителей",
+                        data: [], // Данные о количестве посетителей
+                        backgroundColor: 'rgba(54, 162, 235, 0.2)',
+                        borderColor: 'rgba(54, 162, 235, 1)',
+                        borderWidth: 1
                     }]
                 },
                 options: {
                     scales: {
-                        yAxes: [{
-                            ticks: {
-                                min: 0
-                            }
-                        }]
-                    }
+                        y: {
+                            beginAtZero: true
+                        }
+                    },
+                    maintainAspectRatio: false
                 }
             });
 
-            // Обновление графика
-            setInterval(function() {
-                $.ajax({
-                    url: "/data",
-                    success: function(data) {
-                        // Преобразование временных меток в человеческий вид
-                        var formattedLabels = data.timestamps.map(function(timestamp) {
-                            return moment.unix(timestamp).format("HH:mm:ss"); // Форматируем как часы:минуты:секунды
-                        });
-                        chart.data.labels = formattedLabels;
-                        chart.data.datasets[0].data = data.counts;
-                        chart.update();
-                    }
-                });
-            }, 1000);
-
-            // Запись видео
-            $("#record-button").click(function() {
-                $.ajax({
-                    url: "/record",
-                    success: function() {
-                        alert("Запись видео начата!");
-                    }
-                });
+            var ctxArchive = document.getElementById("canvas-archive").getContext("2d");
+            chartArchive = new Chart(ctxArchive, {
+                type: "bar",
+                data: {
+                    labels: [], // Метки времени для архивных данных
+                    datasets: [{
+                        label: "Количество посетителей",
+                        data: [], // Архивные данные о количестве посетителей
+                        backgroundColor: 'rgba(255, 99, 132, 0.2)',
+                        borderColor: 'rgba(255, 99, 132, 1)',
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    scales: {
+                        y: {
+                            beginAtZero: true
+                        }
+                    },
+                    maintainAspectRatio: false
+                }
             });
+        }
 
-            // Подсчет людей
-            $("#count-button").click(function() {
-                $.ajax({
-                    url: "/count",
-                    success: function() {
-                        alert("Подсчет людей начат!");
-                    }
-                });
-            });
+
+        $('#loadArchive').click(function() {
+            var selectedDate = $('#archiveDate').val(); // Получаем выбранную дату
+            if (selectedDate) {
+                loadArchiveData(selectedDate); // Передаём выбранную дату в функцию
+            } else {
+                alert("Пожалуйста, выберите дату.");
+            }
         });
-        </script>
+
+        function updateLiveData() {
+            $.ajax({
+                url: "/data", // Эндпоинт для получения данных о посетителях в реальном времени
+                type: "GET",
+                success: function(response) {
+                    // Предполагаем, что response содержит объект с полями timestamps и counts
+                    // timestamps - массив меток времени
+                    // counts - массив с количеством посетителей в каждый момент времени
+                    var labels = response.timestamps.map(function(timestamp) {
+                        // Преобразуем метку времени в форматированную строку времени
+                        // Например, из Unix timestamp в "HH:mm:ss"
+                        return moment.unix(timestamp).format("HH:mm:ss");
+                    });
+
+                    // Обновляем метки и данные графика
+                    chartLive.data.labels = labels;
+                    chartLive.data.datasets[0].data = response.counts;
+
+                    // Обновляем график для отображения новых данных
+                    chartLive.update();
+                },
+                error: function(error) {
+                    console.error("Ошибка при загрузке данных лайв графика: ", error);
+                    alert("Ошибка при загрузке данных.");
+                }
+            });
+        }
+
+
+        function loadArchiveData(selectedDate) {
+        $.ajax({
+            url: "/data/archive", // Эндпоинт для получения архивных данных
+            type: "GET",
+            data: {
+                date: selectedDate // Передаем выбранную дату как параметр запроса
+            },
+            success: function(response) {
+                // Предполагается, что response содержит объект с полями labels и data
+                var labels = response.labels; // Метки времени для архивных данных
+                var data = response.data; // Данные о количестве посетителей
+
+                // Обновление данных графика
+                chartArchive.data.labels = labels;
+                chartArchive.data.datasets.forEach((dataset) => {
+                    dataset.data = data;
+                });
+                chartArchive.update();
+            },
+            error: function(error) {
+                console.error("Ошибка при загрузке архивных данных: ", error);
+
+            }
+        });
+        }
+
+    function toggleArchiveView() {
+        // Переключение между лайв и архивными режимами
+        var isChecked = $('#modeSwitch').is(':checked');
+        if (isChecked) {
+            // Показать архивный график, скрыть лайв график
+            $('#graph-container-live').hide();
+            $('#graph-container-archive').show();
+        } else {
+            // Показать лайв график, скрыть архивный график
+            $('#graph-container-archive').hide();
+            $('#graph-container-live').show();
+        }
+    }
+
+
+});
+</script>
+
+
+
+
 </body>
 </html>
