@@ -1,15 +1,13 @@
 from datetime import datetime, timedelta
 from threading import Thread
 
-from flask import Flask, render_template, Response, request
+from flask import Flask, render_template, Response, request, jsonify
 import cv2
 import torch
 import time
 import json
 import schedule
 import os
-from flask import jsonify
-from win32timezone import now
 
 app = Flask(__name__)
 
@@ -27,6 +25,12 @@ correction_factor = 1.1
 
 
 def get_aggregated_data():
+    """
+    Получает агрегированные данные о посетителях за последние 24 часа.
+
+    Returns:
+        list: Список словарей с агрегированными данными по часам.
+    """
     filename = 'visitors_log.json'
     one_day_ago = datetime.now() - timedelta(days=1)
     hourly_data = {i: [] for i in range(24)}  # Подготовка словаря для данных по часам
@@ -61,6 +65,9 @@ def get_aggregated_data():
 
 
 def generate_frames():
+    """
+    Генерирует кадры видеопотока с аннотациями о распознанных объектах.
+    """
     global timestamps, counts
     while True:
         success, frame = cap.read()
@@ -102,6 +109,9 @@ def generate_frames():
 def log_visitors(count):
     """
     Добавляет информацию о количестве посетителей в буфер.
+
+    Args:
+        count (int): Количество обнаруженных посетителей.
     """
     global visitors_buffer
     record = {
@@ -112,6 +122,9 @@ def log_visitors(count):
 
 
 def aggregate_and_save_data():
+    """
+    Агрегирует и сохраняет данные о посетителях каждую минуту.
+    """
     global visitors_buffer
     if not visitors_buffer:
         return
@@ -149,19 +162,32 @@ def periodic_aggregation_task():
         aggregate_and_save_data()
         time.sleep(60)  # Пауза на 60 секунд
 
+
 # Запускаем фоновый процесс агрегации данных
 aggregation_thread = Thread(target=periodic_aggregation_task)
 aggregation_thread.daemon = True
 aggregation_thread.start()
 
+
 @app.route('/video_feed')
 def video_feed():
+    """
+    Возвращает видеопоток с аннотациями о распознанных объектах.
+
+    Returns:
+        Response: Ответ с кадрами видеопотока в формате multipart/x-mixed-replace.
+    """
     return Response(generate_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 
 @app.route('/data')
 def data():
-    # Предполагается, что timestamps и counts обновляются в функции generate_frames
+    """
+    Возвращает данные о посетителях в реальном времени.
+
+    Returns:
+        jsonify: JSON-объект с данными о метках времени и количестве посетителей.
+    """
     global timestamps, counts
     # Очистка данных для избежания неограниченного роста списков
     if len(timestamps) > 1000:  # Число 1000 можно заменить на желаемое максимальное количество записей
@@ -172,17 +198,35 @@ def data():
 
 @app.route('/data/last_24_hours')
 def data_last_24_hours():
+    """
+    Возвращает агрегированные данные о посетителях за последние 24 часа.
+
+    Returns:
+        jsonify: JSON-объект с агрегированными данными по часам.
+    """
     aggregated_data = get_aggregated_data()  # Используйте новую функцию агрегации
     return jsonify(aggregated_data)
 
 
 @app.route('/')
 def index():
+    """
+    Отображает домашнюю страницу приложения.
+
+    Returns:
+        render_template: HTML-шаблон для отображения.
+    """
     return render_template('index.html')
 
 
 @app.route('/data/archive')
 def get_archive_data():
+    """
+    Возвращает архивные данные о посетителях для выбранной даты.
+
+    Returns:
+        jsonify: JSON-объект с архивными данными о посетителях.
+    """
     selected_date = request.args.get('date')  # Получаем дату из параметров запроса
     if not selected_date:
         return jsonify({"error": "Не указана дата"}), 400
@@ -202,9 +246,8 @@ def get_archive_data():
             except ValueError as e:
                 print(f"Ошибка при преобразовании даты: {e}")
 
-
-
     return jsonify(data)
+
 
 if __name__ == '__main__':
     app.run(debug=True)
